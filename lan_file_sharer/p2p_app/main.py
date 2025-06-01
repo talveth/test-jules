@@ -11,7 +11,14 @@ def main():
     print("Starting P2P File Sharing Application...")
 
     my_username = input("Enter your username: ")
-    p2p_server_port = config.SERVER_PORT
+    
+    # Find an available port for this instance
+    try:
+        p2p_server_port = config.find_available_port()
+        print(f"Using port {p2p_server_port} for this instance")
+    except RuntimeError as e:
+        print(f"Error: {e}")
+        return
 
     # Set identity in discovery module first, so broadcasts are correct from the start
     # This also sets discovery.my_server_port which server.py will use via discovery module

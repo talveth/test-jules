@@ -283,27 +283,27 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('Files selected for sharing:', files);
 
         for (const file of files) {
-            const simulatedPath = prompt(`Enter the FULL ABSOLUTE PATH for '${file.name}' on the server machine (this is a temporary measure):`);
-            if (!simulatedPath) {
-                alert(`Sharing cancelled for ${file.name}. Path is required.`);
-                continue;
-            }
             const password = prompt(`Enter an optional password for ${file.name} (leave blank for none):`) || "";
 
             try {
+                // Create FormData to send the file
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('password', password);
+
                 const response = await fetch(`${API_BASE_URL}/shared_files`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filepath: simulatedPath, password: password })
+                    body: formData
                 });
+                
                 if (!response.ok) {
                     const errorData = await response.json();
                     throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
                 }
                 const data = await response.json();
-                console.log(`File ${simulatedPath} shared:`, data);
+                console.log(`File ${file.name} shared:`, data);
                 fetchMySharedFiles(); // Refresh list
-                alert(`File '${file.name}' (path: ${simulatedPath}) is now shared. ID: ${data.file_id}.`);
+                alert(`File '${file.name}' is now shared. ID: ${data.file_id}.`);
             } catch (error) {
                 console.error('Error sharing file:', error);
                 alert(`Failed to share file ${file.name}: ${error.message}`);

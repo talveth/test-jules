@@ -10,22 +10,38 @@ from .peer import Peer
 discovered_peers = {} # Dictionary to store discovered peers { (ip, port): Peer_object }
 my_username = "DefaultUser" # Will be updated by user input
 my_server_port = config.SERVER_PORT # Port our P2P server runs on
+my_ip = None # Will store our actual IP address
+
+def get_local_ip():
+    """Get the actual IP address of this machine."""
+    try:
+        # Create a socket to determine our IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))  # Doesn't actually connect
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"  # Fallback to localhost
 
 def set_identity(username, server_port):
-    global my_username, my_server_port
+    global my_username, my_server_port, my_ip
     my_username = username
     my_server_port = server_port
+    my_ip = get_local_ip()
 
 def send_discovery_message(sock):
     message = {
         "username": my_username,
         "port": my_server_port,
-        "type": "discovery"
+        "type": "discovery",
+        "ip": my_ip  # Include our actual IP
     }
     message_bytes = json.dumps(message).encode('utf-8')
     try:
+        # Send to the standard multicast port that all instances listen on
         sock.sendto(message_bytes, (config.MULTICAST_ADDRESS, config.MULTICAST_PORT))
-        # print(f"Sent discovery: {message}")
+        print(f"Sent discovery message: {message}")
     except Exception as e:
         print(f"Error sending discovery message: {e}")
 
@@ -35,10 +51,11 @@ def listen_for_discovery_messages(sock):
             data, addr = sock.recvfrom(config.BUFFER_SIZE)
             message_str = data.decode('utf-8')
             message = json.loads(message_str)
-            # print(f"Received message: {message} from {addr}")
+            print(f"Received message: {message} from {addr}")
 
             if message.get("type") == "discovery":
-                peer_ip = addr[0]
+                # Use the IP from the message if available, otherwise from addr
+                peer_ip = message.get("ip", addr[0])
                 peer_port = message.get("port")
                 peer_username = message.get("username")
 
@@ -46,13 +63,10 @@ def listen_for_discovery_messages(sock):
                     print(f"Incomplete discovery message from {addr}: {message}")
                     continue
 
-                # Avoid discovering self if message somehow looped back
-                # This check might need refinement based on how local IP is determined
-                # For now, if it's our multicast port and username, ignore,
-                # but ideally check against own actual IP.
-                # if peer_ip == "127.0.0.1" and peer_port == my_server_port and peer_username == my_username:
-                #    continue
-
+                # Avoid discovering self by checking both IP and port
+                if (peer_ip == my_ip or peer_ip == "127.0.0.1") and peer_port == my_server_port and peer_username == my_username:
+                    print(f"Ignoring self-discovery message from {peer_ip}:{peer_port}")
+                    continue
 
                 peer_key = (peer_ip, peer_port)
                 if peer_key not in discovered_peers or discovered_peers[peer_key].username != peer_username:
@@ -75,8 +89,7 @@ def start_discovery(username="P2PUser", server_port_to_advertise=config.SERVER_P
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-    # Bind to the server address for listening
-    # Listen on all interfaces for multicast messages
+    # Bind to the standard multicast port
     sock.bind(('', config.MULTICAST_PORT))
 
     # Tell the operating system to add the socket to the multicast group
@@ -87,6 +100,7 @@ def start_discovery(username="P2PUser", server_port_to_advertise=config.SERVER_P
     sock.settimeout(1.0) # Timeout for recvfrom
 
     print(f"Starting P2P discovery. My Info: {my_username} on port {my_server_port}. Listening on {config.MULTICAST_ADDRESS}:{config.MULTICAST_PORT}")
+    print(f"My IP address: {my_ip}")
 
     # Start listener thread
     listener_thread = threading.Thread(target=listen_for_discovery_messages, args=(sock,), daemon=True)

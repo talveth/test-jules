@@ -1,13 +1,33 @@
 # p2p_app/server.py
-from flask import Flask, jsonify, request, send_file, Response, stream_with_context
+from flask import Flask, jsonify, request, send_file, Response, stream_with_context, send_from_directory
 import requests # For making requests to other peers
 import urllib.parse # For decoding URL parameters
 from . import discovery
 from . import file_handler
 from . import config
 import os # For __main__ test content
+import uuid
+from werkzeug.utils import secure_filename
 
-app = Flask(__name__)
+# Get the absolute path to the frontend directory
+FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend'))
+# Create a directory for uploaded files
+UPLOAD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'uploads'))
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+app = Flask(__name__, 
+    static_folder=os.path.join(FRONTEND_DIR, 'js'),
+    static_url_path='/js')
+
+# Serve CSS files
+@app.route('/css/<path:filename>')
+def serve_css(filename):
+    return send_from_directory(os.path.join(FRONTEND_DIR, 'css'), filename)
+
+# Serve the main frontend page
+@app.route('/')
+def index():
+    return send_from_directory(os.path.join(FRONTEND_DIR, 'html'), 'index.html')
 
 # --- P2P Endpoints (called by other peers) ---
 @app.route('/p2p/hello', methods=['GET'])
@@ -66,23 +86,37 @@ def api_get_peers():
 @app.route('/api/shared_files', methods=['GET', 'POST'])
 def api_manage_shared_files():
     if request.method == 'POST':
-        data = request.json
-        filepath = data.get('filepath')
-        password = data.get('password')
-        if not filepath:
-            return jsonify({"error": "Filepath is required"}), 400
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No file selected"}), 400
 
-        # Security check: Prevent path traversal or access outside a designated share directory if desired
-        # For now, this is illustrative. A real app would need robust path validation.
-        # e.g., if you have a root_share_folder = "/opt/shares"
-        # if not os.path.abspath(filepath).startswith(root_share_folder):
-        #     return jsonify({"error": "Invalid file path (outside designated share area)"}), 403
-
+        # Get password from form data
+        password = request.form.get('password', '')
+        
+        # Secure the filename and create a unique path
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4()}_{filename}"
+        filepath = os.path.join(UPLOAD_DIR, unique_filename)
+        
+        # Save the file
+        file.save(filepath)
+        
+        # Add to shared files
         file_id, message = file_handler.add_shared_file(filepath, password)
         if file_id:
-            return jsonify({"message": message, "file_id": file_id}), 200
+            return jsonify({
+                "message": message,
+                "file_id": file_id,
+                "name": filename
+            }), 200
         else:
-            return jsonify({"error": message}), 400 # Message might be "File not found" or "Path is not a file"
+            # Clean up the file if sharing failed
+            if os.path.exists(filepath):
+                os.remove(filepath)
+            return jsonify({"error": message}), 400
     else: # GET
         return jsonify(file_handler.get_shared_files_metadata_for_remote())
 
